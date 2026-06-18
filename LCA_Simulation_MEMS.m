@@ -3,14 +3,14 @@
 % Outage periods are highlighted in the plots and error statistics are computed.
 % Corrected: outage error now means the drift at the very end of each outage.
 
-clear; 
+clear;
 close all;
 
 %% ------------------------------------------------------------------------
 %  READ DATA FILES (adjust paths as needed)
 %  ------------------------------------------------------------------------
-RLG_JZ105 = readmatrix("Datasets\Dynamic\DS1\IMU.csv");
-PocketSDR_PVT = readmatrix("Datasets\Dynamic\DS1\GPS.csv");
+MPU9250 = readmatrix("Datasets\Dynamic\DS1\IMU.csv");
+GP02 = readmatrix("Datasets\Dynamic\DS1\GPS.csv");
 
 %% ------------------------------------------------------------------------
 %  INITIALIZATIONS AND DEFINITIONS
@@ -26,19 +26,35 @@ neo_starting = 49;            % first GNSS sample index
 micro_g_to_meters_per_second_squared = 9.80665E-6;
 
 % Time vectors
-imu_obssec_s     = RLG_JZ105(imu_starting:end, 1);
-pocket_pvt_obssec_s = PocketSDR_PVT(neo_starting:end, 1);
+imu_obssec_s     = MPU9250(imu_starting:end, 1);
+pocket_pvt_obssec_s = GP02(neo_starting:end, 1);
 
 % IMU data (accel, gyro)
-raw_f_ib_b = RLG_JZ105(imu_starting:end, 2:4);
-raw_w_ib_b = deg2rad(RLG_JZ105(imu_starting:end, 5:7));
+% MPU9250 is in FLU (Forward-Left-Up), convert to FRD (Forward-Right-Down)
+raw_f_ib_b = [ MPU9250(imu_starting:end, 2), ...   % X: forward → forward
+              -MPU9250(imu_starting:end, 3), ...   % Y: left    → right (negate)
+              -MPU9250(imu_starting:end, 4)];      % Z: up      → down  (negate)
+
+raw_w_ib_b = [ deg2rad(MPU9250(imu_starting:end, 5)), ...
+              -deg2rad(MPU9250(imu_starting:end, 6)), ...   % negate Y
+              -deg2rad(MPU9250(imu_starting:end, 7))];      % negate Z
+
+% Load your data as normal, then:
+sample = MPU9250(imu_starting:imu_starting+100, :);
+
+fprintf('Accel X mean: %.4f\n', mean(sample(:,2)));
+fprintf('Accel Y mean: %.4f\n', mean(sample(:,3)));
+fprintf('Accel Z mean: %.4f\n', mean(sample(:,4)));
+fprintf('Gyro  X mean: %.6f\n', mean(sample(:,5)));
+fprintf('Gyro  Y mean: %.6f\n', mean(sample(:,6)));
+fprintf('Gyro  Z mean: %.6f\n', mean(sample(:,7)));
 
 % GNSS data (position, velocity)
-pocket_lat = PocketSDR_PVT(neo_starting:end, 2);
-pocket_lng = PocketSDR_PVT(neo_starting:end, 3);
-pocket_h_b = PocketSDR_PVT(neo_starting:end, 4);
-pocket_vn  = PocketSDR_PVT(neo_starting:end, 5);
-pocket_ve  = PocketSDR_PVT(neo_starting:end, 6);
+pocket_lat = GP02(neo_starting:end, 2);
+pocket_lng = GP02(neo_starting:end, 3);
+pocket_h_b = GP02(neo_starting:end, 4);
+pocket_vn  = GP02(neo_starting:end, 5);
+pocket_ve  = GP02(neo_starting:end, 6);
 
 % max(pocket_vn)
 % max(pocket_ve)
@@ -118,7 +134,7 @@ outage_intervals = [
     44230.00, 44250.00;
     44300.00, 44320.00;
     44400.00, 44420.00;
-    
+
     ];
 
 % Create logical mask: true if GNSS measurement is available (not in outage)
@@ -168,7 +184,7 @@ LC_KF_config.gyro_bias_PSD    = 2.0E-12;
 % LC_KF_config.init_pos_unc = 20;
 % LC_KF_config.init_b_a_unc = 50000 * micro_g_to_meters_per_second_squared;
 % LC_KF_config.init_b_g_unc = deg2rad(1) / 3600;
-% 
+%
 % LC_KF_config.gyro_noise_PSD   = (deg2rad(0.5) / 60)^2;       % ~ 2.1e-8 (rad/s)^2/Hz
 % LC_KF_config.accel_noise_PSD  = (0.1 * 9.80665e-3)^2;       % ~ 9.6e-7 (m/s^2)^2/Hz
 % LC_KF_config.accel_bias_PSD   = 1.0e-5;                     % (m/s^2)^2/Hz
@@ -236,7 +252,7 @@ for i = imu_starting:loop_count
                 [pocket_vn(pocketCount); pocket_ve(pocketCount); 0]);
 
             [est_C_b_e, est_v_eb_e, est_r_eb_e, est_IMU_bias, P_matrix, innov] = ...
-    LC_KF_Epoch(GNSS_r_eb_e, GNSS_v_eb_e, est_C_b_e, est_v_eb_e, ...
+                LC_KF_Epoch(GNSS_r_eb_e, GNSS_v_eb_e, est_C_b_e, est_v_eb_e, ...
                 est_r_eb_e, est_IMU_bias, P_matrix, meas_f_ib_b, meas_w_ib_b, LC_KF_config, l_ba_b);
 
             performance_index = performance_index + 1;
@@ -382,14 +398,15 @@ xlabel('GPS time (s)'); ylabel('East velocity error (m/s)'); grid on;
 
 % 3. Trajectory (estimated line + valid GNSS reference dots)
 figure('Name', 'Trajectory');
+
 line(output_profile(2, 822:end), output_profile(3, 822:end), ...
-     'LineStyle', 'none', 'Marker', '.', 'DisplayName', 'Estimated');
+    'LineStyle', 'none', 'Marker', '.', 'DisplayName', 'Estimated');
 hold on;
 
 % Plot only GNSS points that are NOT in an outage
 valid_idx = find(gnss_valid);
 line(pocket_lat(valid_idx), pocket_lng(valid_idx), ...
-     'LineStyle', 'none', 'Marker', '.', 'DisplayName', 'GNSS (valid)');
+    'LineStyle', 'none', 'Marker', '.', 'DisplayName', 'GNSS (valid)');
 hold off;
 
 legend('Location', 'best');
@@ -397,6 +414,19 @@ xlabel('Latitude (deg)');
 ylabel('Longitude (deg)');
 title('Trajectory (Outage‑free GNSS shown)');
 grid on;
+
+% 3. Attitude (estimated line + valid GNSS reference dots)
+figure('Name', 'Attitude');
+plot(output_profile(8, 822:100:end));
+hold on;
+plot(output_profile(9, 822:100:end));
+hold on;
+plot(output_profile(10, 822:100:end));
+hold off;
+legend('Roll','Pitch','Yaw');
+title('Attitude');
+grid on;
+
 
 % 4. Plot Biases
 figure('Name',  'Accelerometer Biases')
@@ -443,14 +473,14 @@ for j = 1:num_1hz
 end
 
 % Write raw matrix (no headers)
-csv_filename = 'C:\Users\HP\Desktop\Abdullah Wasim\Datasets\estimated_trajectory_1Hz.csv';
+csv_filename = 'Datasets\estimated_trajectory_1Hz.csv';
 writematrix(output_1hz, csv_filename);
 fprintf('1 Hz estimated trajectory saved to %s (%d samples)\n', csv_filename, num_1hz);
 
 % Write table with headers (more readable)
 T = array2table(output_1hz, 'VariableNames', ...
     {'GPStime', 'lat_deg', 'lon_deg', 'h_m', 'vn_mps', 've_mps'});
-writetable(T, 'C:\Users\HP\Desktop\Abdullah Wasim\Datasets\estimated_trajectory_1Hz_with_headers.csv');
+writetable(T, 'Datasets\estimated_trajectory_1Hz_with_headers.csv');
 fprintf('1 Hz estimated trajectory with headers saved.\n');
 
 %% ------------------------------------------------------------------------
@@ -466,7 +496,7 @@ gnss_ref_valid = [pocket_pvt_obssec_s(valid_indices), ...
     pocket_ve(valid_indices)];
 
 % Write raw matrix
-csv_ref_filename = 'C:\Users\HP\Desktop\Abdullah Wasim\Datasets\gnss_reference_no_outages.csv';
+csv_ref_filename = 'Datasets\gnss_reference_no_outages.csv';
 writematrix(gnss_ref_valid, csv_ref_filename);
 fprintf('GNSS reference data (outages removed) saved to %s (%d samples)\n', ...
     csv_ref_filename, length(valid_indices));
@@ -474,7 +504,7 @@ fprintf('GNSS reference data (outages removed) saved to %s (%d samples)\n', ...
 % Write table with headers
 T_ref = array2table(gnss_ref_valid, 'VariableNames', ...
     {'GPStime', 'lat_deg', 'lon_deg', 'h_m', 'vn_mps', 've_mps'});
-writetable(T_ref, 'C:\Users\HP\Desktop\Abdullah Wasim\Datasets\gnss_reference_no_outages_with_headers.csv');
+writetable(T_ref, 'Datasets\gnss_reference_no_outages_with_headers.csv');
 fprintf('GNSS reference with headers saved.\n');
 
 %% ========================================================================
@@ -562,6 +592,13 @@ else
         0.5 * Skew_symmetric([0;0;alpha_ie]) * old_C_b_e * tor_i;
 end
 C_b_e = C_Earth * old_C_b_e * C_new_old;
+
+% Renormalize DCM (Gram-Schmidt)
+C_b_e(:,1) = C_b_e(:,1) / norm(C_b_e(:,1));
+C_b_e(:,2) = C_b_e(:,2) - dot(C_b_e(:,2), C_b_e(:,1)) * C_b_e(:,1);
+C_b_e(:,2) = C_b_e(:,2) / norm(C_b_e(:,2));
+C_b_e(:,3) = cross(C_b_e(:,1), C_b_e(:,2));
+
 f_ib_e = ave_C_b_e * f_ib_b;
 v_eb_e_pred = old_v_eb_e + tor_i * (f_ib_e + Gravity_ECEF(old_r_eb_e) - ...
     2 * Skew_symmetric([0;0;omega_ie]) * old_v_eb_e);
@@ -615,37 +652,37 @@ end
 function [est_C_b_e_new, est_v_eb_e_new, est_r_eb_e_new, est_IMU_bias_new, P_matrix_new, innov] = ...
     LC_KF_Epoch(GNSS_r_eb_e, GNSS_v_eb_e, est_C_b_e_old, est_v_eb_e_old, ...
     est_r_eb_e_old, est_IMU_bias_old, P_matrix_old, meas_f_ib_b, meas_omega_ib_b, LC_KF_config, l_ba_b)
-    
-    % Measurement matrix (position & velocity errors)
-    H = zeros(6,15);
-    H(1:3, 7:9) = -eye(3);
-    H(4:6, 4:6) = -eye(3);
-    
-    % Measurement noise
-    R = blkdiag(eye(3)*LC_KF_config.pos_meas_SD^2, eye(3)*LC_KF_config.vel_meas_SD^2);
-    
-    % Innovation
-    delta_z = [GNSS_r_eb_e - est_r_eb_e_old - est_C_b_e_old * l_ba_b;
-               GNSS_v_eb_e - est_v_eb_e_old - est_C_b_e_old * cross(meas_omega_ib_b, l_ba_b) + ... 
-               Skew_symmetric([0;0;7.292115e-5]) * est_C_b_e_old * l_ba_b];
-    
-    S = H * P_matrix_old * H' + R;
-    innov = delta_z' / S * delta_z;   % Mahalanobis distance (optional)
-    
-    % Kalman gain
-    K = P_matrix_old * H' / S;
-    
-    % State correction (closed‑loop, propagated state is zero)
-    dx = K * delta_z;
-    
-    % Apply corrections
-    est_C_b_e_new = (eye(3) - Skew_symmetric(dx(1:3))) * est_C_b_e_old;
-    est_v_eb_e_new = est_v_eb_e_old - dx(4:6);
-    est_r_eb_e_new = est_r_eb_e_old - dx(7:9);
-    est_IMU_bias_new = est_IMU_bias_old + dx(10:15);
-    
-    % Update covariance (Joseph form for stability)
-    P_matrix_new = (eye(15) - K * H) * P_matrix_old * (eye(15) - K * H)' + K * R * K';
+
+% Measurement matrix (position & velocity errors)
+H = zeros(6,15);
+H(1:3, 7:9) = -eye(3);
+H(4:6, 4:6) = -eye(3);
+
+% Measurement noise
+R = blkdiag(eye(3)*LC_KF_config.pos_meas_SD^2, eye(3)*LC_KF_config.vel_meas_SD^2);
+
+% Innovation
+delta_z = [GNSS_r_eb_e - est_r_eb_e_old - est_C_b_e_old * l_ba_b;
+    GNSS_v_eb_e - est_v_eb_e_old - est_C_b_e_old * cross(meas_omega_ib_b, l_ba_b) + ...
+    Skew_symmetric([0;0;7.292115e-5]) * est_C_b_e_old * l_ba_b];
+
+S = H * P_matrix_old * H' + R;
+innov = delta_z' / S * delta_z;   % Mahalanobis distance (optional)
+
+% Kalman gain
+K = P_matrix_old * H' / S;
+
+% State correction (closed‑loop, propagated state is zero)
+dx = K * delta_z;
+
+% Apply corrections
+est_C_b_e_new = (eye(3) - Skew_symmetric(dx(1:3))) * est_C_b_e_old;
+est_v_eb_e_new = est_v_eb_e_old - dx(4:6);
+est_r_eb_e_new = est_r_eb_e_old - dx(7:9);
+est_IMU_bias_new = est_IMU_bias_old + dx(10:15);
+
+% Update covariance (Joseph form for stability)
+P_matrix_new = (eye(15) - K * H) * P_matrix_old * (eye(15) - K * H)' + K * R * K';
 end
 
 function P_matrix = Initialize_P_Matrix(LC_KF_config)
@@ -694,5 +731,12 @@ C = [cos_theta*cos_psi, cos_theta*sin_psi, -sin_theta;
 end
 
 function eul = DCM2Euler(C)
-eul = [atan2(C(2,3), C(3,3)); -asin(C(1,3)); atan2(C(1,2), C(1,1))];
+
+pitch = -asin(C(1,3));
+roll  = atan2(C(2,3), C(3,3));
+% yaw   = atan2(C(1,2), C(1,1));   % This is only correct if you define yaw = atan2(C12,C11)
+% Correct ZYX convention yaw:
+yaw   = atan2(C(2,1), C(1,1));   % ← fix this
+eul   = [roll; pitch; yaw];
+
 end
