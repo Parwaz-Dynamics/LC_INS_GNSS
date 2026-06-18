@@ -4,13 +4,13 @@
 % Corrected: outage error now means the drift at the very end of each outage.
 
 clear; 
-% close all;
+close all;
 
 %% ------------------------------------------------------------------------
 %  READ DATA FILES (adjust paths as needed)
 %  ------------------------------------------------------------------------
-RLG_JZ105 = readmatrix("C:\Users\HP\Desktop\Abdullah Wasim\Datasets\Dynamic\DS1\IMU.csv");
-PocketSDR_PVT = readmatrix("C:\Users\HP\Desktop\Abdullah Wasim\Datasets\Dynamic\DS1\GPS.csv");
+RLG_JZ105 = readmatrix("Datasets\Dynamic\DS1\IMU.csv");
+PocketSDR_PVT = readmatrix("Datasets\Dynamic\DS1\GPS.csv");
 
 %% ------------------------------------------------------------------------
 %  INITIALIZATIONS AND DEFINITIONS
@@ -236,8 +236,8 @@ for i = imu_starting:loop_count
                 [pocket_vn(pocketCount); pocket_ve(pocketCount); 0]);
 
             [est_C_b_e, est_v_eb_e, est_r_eb_e, est_IMU_bias, P_matrix, innov] = ...
-                LC_KF_Epoch(GNSS_r_eb_e, GNSS_v_eb_e, dt_gnss, est_C_b_e, est_v_eb_e, ...
-                est_r_eb_e, est_IMU_bias, P_matrix, meas_f_ib_b, meas_w_ib_b, est_L_b, LC_KF_config, l_ba_b);
+    LC_KF_Epoch(GNSS_r_eb_e, GNSS_v_eb_e, est_C_b_e, est_v_eb_e, ...
+                est_r_eb_e, est_IMU_bias, P_matrix, meas_f_ib_b, meas_w_ib_b, LC_KF_config, l_ba_b);
 
             performance_index = performance_index + 1;
 
@@ -613,60 +613,39 @@ end
 end
 
 function [est_C_b_e_new, est_v_eb_e_new, est_r_eb_e_new, est_IMU_bias_new, P_matrix_new, innov] = ...
-    LC_KF_Epoch(GNSS_r_eb_e, GNSS_v_eb_e, tor_s, est_C_b_e_old, est_v_eb_e_old, ...
-    est_r_eb_e_old, est_IMU_bias_old, P_matrix_old, meas_f_ib_b, meas_omega_ib_b, est_L_b_old, LC_KF_config, l_ba_b)
-c = 299792458;
-omega_ie = 7.292115E-5;
-R_0 = 6378137;
-e = 0.0818191908425;
-Omega_ie = Skew_symmetric([0;0;omega_ie]);
-% Transition matrix (first order)
-Phi_matrix = eye(15);
-Phi_matrix(1:3,1:3) = Phi_matrix(1:3,1:3) - Omega_ie * tor_s;
-Phi_matrix(1:3,13:15) = est_C_b_e_old * tor_s;
-Phi_matrix(4:6,1:3) = -tor_s * Skew_symmetric(est_C_b_e_old * meas_f_ib_b);
-Phi_matrix(4:6,4:6) = Phi_matrix(4:6,4:6) - 2 * Omega_ie * tor_s;
-geocentric_radius = R_0 / sqrt(1 - (e * sin(est_L_b_old))^2) * ...
-    sqrt(cos(est_L_b_old)^2 + (1 - e^2)^2 * sin(est_L_b_old)^2);
-Phi_matrix(4:6,7:9) = -tor_s * 2 * Gravity_ECEF(est_r_eb_e_old) / geocentric_radius * ...
-    est_r_eb_e_old' / sqrt(est_r_eb_e_old' * est_r_eb_e_old);
-Phi_matrix(4:6,10:12) = est_C_b_e_old * tor_s;
-Phi_matrix(7:9,4:6) = eye(3) * tor_s;
-% System noise covariance
-Q_prime_matrix = zeros(15);
-Q_prime_matrix(1:3,1:3) = eye(3) * LC_KF_config.gyro_noise_PSD * tor_s;
-Q_prime_matrix(4:6,4:6) = eye(3) * LC_KF_config.accel_noise_PSD * tor_s;
-Q_prime_matrix(10:12,10:12) = eye(3) * LC_KF_config.accel_bias_PSD * tor_s;
-Q_prime_matrix(13:15,13:15) = eye(3) * LC_KF_config.gyro_bias_PSD * tor_s;
-% Propagate state (all zeros due to closed loop)
-x_est_propagated = zeros(15,1);
-P_matrix_propagated = Phi_matrix * (P_matrix_old + 0.5 * Q_prime_matrix) * ...
-    Phi_matrix' + 0.5 * Q_prime_matrix;
-% P_matrix_propagated = P_matrix_old;
-% Measurement matrix
-H_matrix = zeros(6,15);
-H_matrix(1:3,7:9) = -eye(3);
-H_matrix(4:6,4:6) = -eye(3);
-% Measurement noise
-R_matrix = zeros(6,6);
-R_matrix(1:3,1:3) = eye(3) * LC_KF_config.pos_meas_SD^2;
-R_matrix(4:6,4:6) = eye(3) * LC_KF_config.vel_meas_SD^2;
-
-delta_z = [GNSS_r_eb_e - est_r_eb_e_old - est_C_b_e_old * l_ba_b; GNSS_v_eb_e - est_v_eb_e_old - est_C_b_e_old * cross(meas_omega_ib_b, l_ba_b) + Omega_ie * est_C_b_e_old * l_ba_b];
-
-C = H_matrix * P_matrix_propagated * H_matrix' + R_matrix;
-innov = delta_z' / C * delta_z;
-
-% Kalman gain
-K_matrix = P_matrix_propagated * H_matrix' * inv(H_matrix * P_matrix_propagated * H_matrix' + R_matrix);
-% State update
-x_est_new = x_est_propagated + K_matrix * delta_z;
-P_matrix_new = (eye(15) - K_matrix * H_matrix) * P_matrix_propagated;
-% Closed-loop correction
-est_C_b_e_new = (eye(3) - Skew_symmetric(x_est_new(1:3))) * est_C_b_e_old;
-est_v_eb_e_new = est_v_eb_e_old - x_est_new(4:6);
-est_r_eb_e_new = est_r_eb_e_old - x_est_new(7:9);
-est_IMU_bias_new = est_IMU_bias_old + x_est_new(10:15);
+    LC_KF_Epoch(GNSS_r_eb_e, GNSS_v_eb_e, est_C_b_e_old, est_v_eb_e_old, ...
+    est_r_eb_e_old, est_IMU_bias_old, P_matrix_old, meas_f_ib_b, meas_omega_ib_b, LC_KF_config, l_ba_b)
+    
+    % Measurement matrix (position & velocity errors)
+    H = zeros(6,15);
+    H(1:3, 7:9) = -eye(3);
+    H(4:6, 4:6) = -eye(3);
+    
+    % Measurement noise
+    R = blkdiag(eye(3)*LC_KF_config.pos_meas_SD^2, eye(3)*LC_KF_config.vel_meas_SD^2);
+    
+    % Innovation
+    delta_z = [GNSS_r_eb_e - est_r_eb_e_old - est_C_b_e_old * l_ba_b;
+               GNSS_v_eb_e - est_v_eb_e_old - est_C_b_e_old * cross(meas_omega_ib_b, l_ba_b) + ... 
+               Skew_symmetric([0;0;7.292115e-5]) * est_C_b_e_old * l_ba_b];
+    
+    S = H * P_matrix_old * H' + R;
+    innov = delta_z' / S * delta_z;   % Mahalanobis distance (optional)
+    
+    % Kalman gain
+    K = P_matrix_old * H' / S;
+    
+    % State correction (closed‑loop, propagated state is zero)
+    dx = K * delta_z;
+    
+    % Apply corrections
+    est_C_b_e_new = (eye(3) - Skew_symmetric(dx(1:3))) * est_C_b_e_old;
+    est_v_eb_e_new = est_v_eb_e_old - dx(4:6);
+    est_r_eb_e_new = est_r_eb_e_old - dx(7:9);
+    est_IMU_bias_new = est_IMU_bias_old + dx(10:15);
+    
+    % Update covariance (Joseph form for stability)
+    P_matrix_new = (eye(15) - K * H) * P_matrix_old * (eye(15) - K * H)' + K * R * K';
 end
 
 function P_matrix = Initialize_P_Matrix(LC_KF_config)
