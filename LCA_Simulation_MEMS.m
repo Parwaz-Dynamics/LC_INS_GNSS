@@ -4,7 +4,7 @@
 % Corrected: outage error now means the drift at the very end of each outage.
 
 clear;
-close all;
+% close all;
 
 %% ------------------------------------------------------------------------
 %  READ DATA FILES (adjust paths as needed)
